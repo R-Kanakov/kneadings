@@ -1,0 +1,2 @@
+from .ThreeConnectedNeurons import ThreeConnectedNeurons
+from .FitzHughNagumo import FitzHughNagumo

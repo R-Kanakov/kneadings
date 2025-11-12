@@ -2,7 +2,8 @@ import numpy as np
 import pprint
 import matplotlib.pyplot as plt
 
-from lib.computation_template.workers_utils import register, makeFinalOutname
+from lib.computation_template.workers_utils import makeFinalOutname
+from src.computing.util import register
 
 import lib.eq_finder.SystOsscills as so
 from src.system_analysis.get_inits import continue_equilibrium, get_saddle_foci_grid, find_inits_for_equilibrium_grid, generate_parameters
@@ -16,90 +17,133 @@ registry = {
     "post": {}
 }
 
+class ConfigDataKneadingsFbpo:
+    """defaultSystem: system parameters"""
+    w: int
+    a: float
+    b: float
+    r: int
 
-@register(registry, 'init', 'kneadings_fbpo')
+    """grid: grid parameters"""
+    left_n    : int
+    right_n   : int
+    left_step : float
+    right_step: float
+    x_name    : str
+    x_caption : str
+
+    down_n   : int
+    up_n     : int
+    down_step: float
+    up_step  : float
+    y_name   : str
+    y_caption: str
+
+    """kneadings_fbpo: system evaluation parameters"""
+    dt             : float
+    n              : int
+    stride         : int
+    kneadings_start: int
+    kneadings_end  : int
+
+    """Output parameters"""
+    img_extension: str
+
+    """misc: additional keyword-arguments"""
+    font_size     : int
+    init_res_name : str
+    param_to_index: dict
+
+
+    def __init__(self):
+        pass
+
+    def initialize(self, config):
+        def_sys_dict = config['defaultSystem']
+        self.w       = def_sys_dict['w']
+        self.a       = def_sys_dict['a']
+        self.b       = def_sys_dict['b']
+        self.r       = def_sys_dict['r']
+
+        grid_dict = config['grid']
+
+        grid_dict_first = grid_dict['first']
+        self.left_n     = grid_dict_first['left_n']
+        self.left_step  = grid_dict_first['left_step']
+        self.right_n    = grid_dict_first['right_n']
+        self.right_step = grid_dict_first['right_step']
+        self.x_caption  = f"{grid_dict_first['caption']}"
+        self.x_name     = grid_dict_first['name']
+
+        grid_dict_second = grid_dict['second']
+        self.up_n        = grid_dict_second['up_n']
+        self.up_step     = grid_dict_second['up_step']
+        self.down_n      = grid_dict_second['down_n']
+        self.down_step   = grid_dict_second['down_step']
+        self.y_caption   = f"{grid_dict_second['caption']}"
+        self.y_name      = grid_dict_second['name']
+
+        kneadings_dict       = config['kneadings_fbpo']
+        self.dt              = kneadings_dict['dt']
+        self.n               = kneadings_dict['n']
+        self.stride          = kneadings_dict['stride']
+        self.kneadings_start = kneadings_dict['kneadings_start']
+        self.kneadings_end   = kneadings_dict['kneadings_end']
+
+        output_dict        = config['output']
+        self.img_extension = output_dict['imageExtension']
+        self.directory     = {'targetDir': output_dict['directory']}
+
+        misc_dict           = config['misc']
+        self.font_size      = misc_dict['plot_params']['font_size']
+        self.init_res_name  = misc_dict['init_res']
+        self.start_eq       = misc_dict['start_eq']
+        self.param_to_index = misc_dict['param_to_index']
+
+data = ConfigDataKneadingsFbpo()
+import time
+@register(registry, 'init')
 def init_kneadings_fbpo(config, timeStamp):
-    def_sys_dict = config['defaultSystem']
-    w = def_sys_dict['w']
-    a = def_sys_dict['a']
-    b = def_sys_dict['b']
-    r = def_sys_dict['r']
+    data.initialize(config)
 
-    param_to_index = config['misc']['param_to_index']
-    start_eq = config['misc']['start_eq']
-    # init_flag = config['misc']['init_flag']
-
-    grid_dict = config['grid']
-    up_n = grid_dict['second']['up_n']
-    up_step = grid_dict['second']['up_step']
-    down_n = grid_dict['second']['down_n']
-    down_step = grid_dict['second']['down_step']
-    left_n = grid_dict['first']['left_n']
-    left_step = grid_dict['first']['left_step']
-    right_n = grid_dict['first']['right_n']
-    right_step = grid_dict['first']['right_step']
-
-    init_res_name = config['misc']['init_res']
-    if init_res_name != "ignore":  # init_flag
-        init_res = np.load("./input/" + init_res_name + ".npz")
-        inits = init_res['inits']
-        nones = init_res['nones']
+    if data.init_res_name != "ignore":  # init_flag
+        init_res = np.load("./input/" + data.init_res_name + ".npz")
+        inits    = init_res['inits']
+        nones    = init_res['nones']
         params_x = init_res['params_x']
         params_y = init_res['params_y']
-        if len(inits) != (3 * (left_n + right_n + 1) * (up_n + down_n + 1)):
+
+        if len(inits) != (3 * (data.left_n + data.right_n + 1) * (data.up_n + data.down_n + 1)):
             raise Exception("Saved initial conditions array differs from entered grid params!")
-        if not np.array_equal(start_eq, init_res['start_eq']):
+
+        if not np.array_equal(data.start_eq, init_res['start_eq']):
             raise Exception("Start equilibrium of saved initial conditions array ")
     else:
-        start_sys = so.FourBiharmonicPhaseOscillators(w, a, b, r)
+        start_sys = so.FourBiharmonicPhaseOscillators(data.w, data.a, data.b, data.r)
         reduced_rhs_wrapper = start_sys.getReducedSystem
         reduced_jac_wrapper = start_sys.getReducedSystemJac
         get_params = start_sys.getParams
         set_params = start_sys.setParams
 
-        if start_eq is not None:
+        if data.start_eq is not None:
             eq_grid = continue_equilibrium(reduced_rhs_wrapper, reduced_jac_wrapper, get_params, set_params,
-                                           param_to_index, 'a', 'b',
-                                           start_eq, up_n, down_n, left_n, right_n,
-                                           up_step, down_step, left_step, right_step)
-            sf_grid = get_saddle_foci_grid(eq_grid, up_n, down_n, left_n, right_n)
-            inits, nones = find_inits_for_equilibrium_grid(sf_grid, 3, up_n, down_n, left_n, right_n)
-            params_x, params_y = generate_parameters((a, b), up_n, down_n, left_n, right_n,
-                                                up_step, down_step, left_step, right_step)
+                                           data.param_to_index, 'a', 'b',
+                                           data.start_eq, data.up_n, data.down_n, data.left_n, data.right_n,
+                                           data.up_step, data.down_step, data.left_step, data.right_step)
+            sf_grid = get_saddle_foci_grid(eq_grid, data.up_n, data.down_n, data.left_n, data.right_n)
+            inits, nones = find_inits_for_equilibrium_grid(sf_grid, 3, data.up_n, data.down_n, data.left_n, data.right_n)
+            params_x, params_y = generate_parameters((data.a, data.b), data.up_n, data.down_n, data.left_n, data.right_n,
+                                                data.up_step, data.down_step, data.left_step, data.right_step)
         else:
             raise Exception("Start saddle-focus was not found!")
 
-    return {'inits': inits, 'nones': nones, 'params_x': params_x, 'params_y': params_y, 'targetDir': 'output'}
+    return {'inits': inits, 'nones': nones, 'params_x': params_x, 'params_y': params_y}
 
 
-@register(registry, 'worker', 'kneadings_fbpo')
+@register(registry, 'worker')
 def worker_kneadings_fbpo(config, initResult, timeStamp):
-    def_sys_dict = config['defaultSystem']
-    w = def_sys_dict['w']
-    a = def_sys_dict['a']
-    b = def_sys_dict['b']
-    r = def_sys_dict['r']
-    def_params = [w, a, b, r]
-
-    param_to_index = config['misc']['param_to_index']
-
-    grid_dict = config['grid']
-    left_n = grid_dict['first']['left_n']
-    right_n = grid_dict['first']['right_n']
-    up_n = grid_dict['second']['up_n']
-    down_n = grid_dict['second']['down_n']
-    param_x_name = grid_dict['first']['name']
-    param_y_name = grid_dict['second']['name']
-
-    kneadings_dict = config['kneadings_fbpo']
-    dt = kneadings_dict['dt']
-    n = kneadings_dict['n']
-    stride = kneadings_dict['stride']
-    kneadings_start = kneadings_dict['kneadings_start']
-    kneadings_end = kneadings_dict['kneadings_end']
-
-    inits = initResult['inits']
-    nones = initResult['nones']
+    inits    = initResult['inits']
+    nones    = initResult['nones']
     params_x = initResult['params_x']
     params_y = initResult['params_y']
 
@@ -110,23 +154,23 @@ def worker_kneadings_fbpo(config, initResult, timeStamp):
         nones,
         params_x,
         params_y,
-        def_params,
-        param_to_index,
-        param_x_name,
-        param_y_name,
-        up_n,
-        down_n,
-        left_n,
-        right_n,
-        dt,
-        n,
-        stride,
-        kneadings_start,
-        kneadings_end
+        [data.w, data.a, data.b, data.r],
+        data.param_to_index,
+        data.x_name,
+        data.y_name,
+        data.up_n,
+        data.down_n,
+        data.left_n,
+        data.right_n,
+        data.dt,
+        data.n,
+        data.stride,
+        data.kneadings_start,
+        data.kneadings_end
     )
 
     # print("Results:")
-    for idx in range((left_n + right_n + 1) * (up_n + down_n + 1)):
+    for idx in range((data.left_n + data.right_n + 1) * (data.up_n + data.down_n + 1)):
         kneading_weighted_sum = kneadings_weighted_sum_set[idx]
         kneading_symbolic = decimal_to_number_system(kneading_weighted_sum, 4)
 
@@ -140,74 +184,54 @@ def worker_kneadings_fbpo(config, initResult, timeStamp):
     return {'kneadings_weighted_sum_set': kneadings_weighted_sum_set, 'kneadings_records': kneadings_records}
 
 
-@register(registry, 'post', 'kneadings_fbpo')
+@register(registry, 'post')
 def post_kneadings_fbpo(config, initResult, workerResult, grid, startTime):
-    def_sys_dict = config['defaultSystem']
-    w = def_sys_dict['w']
-    a = def_sys_dict['a']
-    b = def_sys_dict['b']
-    r = def_sys_dict['r']
-
-    plot_params_dict = config['misc']['plot_params']
-    font_size = plot_params_dict['font_size']
-    init_res_name = config['misc']['init_res']
-
-    grid_dict = config['grid']
-    up_n = grid_dict['second']['up_n']
-    up_step = grid_dict['second']['up_step']
-    down_n = grid_dict['second']['down_n']
-    down_step = grid_dict['second']['down_step']
-    left_n = grid_dict['first']['left_n']
-    left_step = grid_dict['first']['left_step']
-    right_n = grid_dict['first']['right_n']
-    right_step = grid_dict['first']['right_step']
-
-    inits = initResult['inits']
-    nones = initResult['nones']
+    inits    = initResult['inits']
+    nones    = initResult['nones']
     params_x = initResult['params_x']
     params_y = initResult['params_y']
-    start_eq = config['misc']['start_eq']
 
     kneadings_weighted_sum_set = workerResult['kneadings_weighted_sum_set']
-    kneadings_records = workerResult['kneadings_records']
+    kneadings_records          = workerResult['kneadings_records']
 
-    param_x_caption = f"{grid_dict['first']['caption']}"
-    param_x_count = left_n + right_n + 1
-    param_x_start = a - left_n * left_step
-    param_x_end = a + right_n * right_step
-    param_y_caption = f"{grid_dict['second']['caption']}"
-    param_y_count = up_n + down_n + 1
-    param_y_start = b - down_n * down_step
-    param_y_end = b + up_n * up_step
+    param_x_caption = data.x_caption
+    param_x_count   = data.left_n + data.right_n + 1
+    param_x_start   = data.a - data.left_n * data.left_step
+    param_x_end     = data.a + data.right_n * data.right_step
+    param_y_caption = data.y_caption
+    param_y_count   = data.up_n + data.down_n + 1
+    param_y_start   = data.b - data.down_n * data.down_step
+    param_y_end     = data.b + data.up_n * data.up_step
 
-    plot_mode_map(kneadings_weighted_sum_set, set_random_color_map, param_x_caption, param_y_caption,
-                  param_x_start, param_x_end, param_x_count, param_y_start, param_y_end, param_y_count,
-                  font_size)
-    plt.title(r'$\omega = 0$, $r = 1$', fontsize=font_size)
+    plot_mode_map(kneadings_weighted_sum_set, set_random_color_map,
+                  param_x_caption, param_y_caption,
+                  param_x_start, param_x_end, param_x_count,
+                  param_y_start, param_y_end, param_y_count,
+                  data.font_size)
+    plt.title(r'$\omega = 0$, $r = 1$', fontsize=data.font_size)
 
-    if init_res_name != "ignore":
-        npz_outname = makeFinalOutname(config, initResult, "npz", startTime)
+    if data.init_res_name != "ignore":
+        npz_outname = makeFinalOutname(config, data.directory, "npz", startTime)
         np.savez(
             npz_outname,
             inits=inits,
             nones=nones,
             params_x=params_x,
             params_y=params_y,
-            start_eq=start_eq
+            start_eq=data.start_eq
         )
         print("Init stage results successfully saved")
 
-    npy_outname = makeFinalOutname(config, initResult, "npy", startTime)
+    npy_outname = makeFinalOutname(config, data.directory, "npy", startTime)
     np.save(npy_outname, kneadings_weighted_sum_set)
     print("Kneadings set successfully saved")
 
-    txt_outname = makeFinalOutname(config, initResult, "txt", startTime)
+    txt_outname = makeFinalOutname(config, data.directory, "txt", startTime)
     with open(f'{txt_outname}', 'w') as txt_output:
         txt_output.write(kneadings_records)
     print("Kneadings records successfully saved")
 
-    img_extension = config['output']['imageExtension']
-    plot_outname = makeFinalOutname(config, initResult, img_extension, startTime)
+    plot_outname = makeFinalOutname(config, data.directory, data.img_extension, startTime)
     plt.savefig(plot_outname, dpi=300, bbox_inches='tight')
     plt.close()
     print("Mode map successfully saved")

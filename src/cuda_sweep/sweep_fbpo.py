@@ -310,26 +310,26 @@ def sweep(
 ):
     """Calls CUDA kernel and gets kneadings set back from GPU"""
     total_parameter_space_size = (left_n + right_n + 1) * (up_n + down_n + 1)
-    kneadings_weighted_sum_set = np.zeros(total_parameter_space_size)
     kneadings_weighted_sum_set_gpu = cuda.device_array(total_parameter_space_size)
 
-    inits_gpu = cuda.to_device(inits)
-    nones_gpu = cuda.to_device(nones)
+    inits_gpu      = cuda.to_device(inits)
+    nones_gpu      = cuda.to_device(nones)
     def_params_gpu = cuda.to_device(def_params)
-    params_x_gpu = cuda.to_device(params_x)
-    params_y_gpu = cuda.to_device(params_y)
+    params_x_gpu   = cuda.to_device(params_x)
+    params_y_gpu   = cuda.to_device(params_y)
 
     param_x_idx = param_to_index[param_x_str]
     param_y_idx = param_to_index[param_y_str]
 
-    grid_x_dimension = (total_parameter_space_size + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
-    dim_grid = grid_x_dimension
+    dim_grid  = (total_parameter_space_size + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     dim_block = THREADS_PER_BLOCK
 
     print(f"Num of blocks per grid:       {dim_grid}")
     print(f"Num of threads per block:     {dim_block}")
     print(f"Total Num of threads running: {dim_grid * dim_block}")
-    print(f"Parameters a_count = {left_n + right_n + 1}, b_count = {up_n + down_n + 1}")
+    print(f"Count of 'a' parameters:      {left_n + right_n + 1}") 
+    print(f"Count of 'b' parameters:      {up_n + down_n + 1}")
+    print(f"{(left_n + right_n + 1) * (up_n + down_n + 1)}")
 
     # Call CUDA kernel
     sweep_threads = make_sweep_threads(heavy_tail)
@@ -353,6 +353,7 @@ def sweep(
         kneadings_end,
     )
 
+    kneadings_weighted_sum_set = np.zeros(total_parameter_space_size)
     kneadings_weighted_sum_set_gpu.copy_to_host(kneadings_weighted_sum_set)
 
     return kneadings_weighted_sum_set

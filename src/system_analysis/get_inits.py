@@ -53,6 +53,12 @@ def continue_equilibrium(rhs, jac, get_params, set_params, param_to_index, param
                 continue
             deltas.append((di, dj))
 
+    # Так ли важно использовать новую полученную точку как приближение?
+    # На моём ПК эта функция занимает 1.5 минуты.
+    # Не будет ли быстрее сюда же навесить куду и для каждой точки на сетке
+    # найти (или не найти) состояние равновесия?
+    # Или здесь пострадает точность?
+
     # сортируем по удалению от центра (сначала ближайшие точки)
     deltas.sort(key=lambda delta: abs(delta[0]) + abs(delta[1]))
 
@@ -87,13 +93,16 @@ def continue_equilibrium(rhs, jac, get_params, set_params, param_to_index, param
 
         if eq_obj is not None:
             grid[curr_j][curr_i] = eq_obj
-            print(
-                f"Node ({curr_i}, {curr_j}) | Equilibrium {eq_obj.coordinates} was found "
-                f"with parameters ({curr_param_x:.3f}, {curr_param_y:.3f})")
+            #print(
+            #    f"Node ({curr_i}, {curr_j}) | Equilibrium {eq_obj.coordinates} was found "
+            #    f"with parameters ({curr_param_x:.3f}, {curr_param_y:.3f})"
+            #    )
         else:
-            print(
-                f"Node ({curr_i}, {curr_j}) | No equilibrium was found "
-                f"with parameters ({curr_param_x:.3f}, {curr_param_y:.3f})")
+            #print(
+            #    f"Node ({curr_i}, {curr_j}) | No equilibrium was found "
+            #    f"with parameters ({curr_param_x:.3f}, {curr_param_y:.3f})"
+            #    )
+            _ = _
 
     return grid
 
