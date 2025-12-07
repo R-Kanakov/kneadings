@@ -1,12 +1,12 @@
-from .FitzHughNagumo import FitzHughNagumo
-from .FitzHughNagumo import rhs_jit as rhs_jit_fhn
+from .FitzHughNagumo import FitzHughNagumo, rhs_jit as rhs_jit_fhn
+from src.systems.BaseSystem import BaseSystem
 from typing import Union
 from itertools import chain
 from numba import cuda
 import numpy as np
 
 
-class ThreeConnectedNeurons:
+class ThreeConnectedNeurons(BaseSystem):
     """"Three Connected FitzHugh-Nagumo system"""
     a   : float
     b   : float
@@ -24,30 +24,36 @@ class ThreeConnectedNeurons:
         assert isinstance(b, float), "'b' must be float"
 
         assert isinstance(tau1, float) or isinstance(tau1, int), "'tau1' must be float or int"
-        assert tau1 >= 0., "'tau1' must be greater than zero!" # TODO: check for non-positive taus
+        assert tau1 > 0., "'tau1' must be greater than zero!" # TODO: check for non-positive taus
         assert isinstance(tau2, float) or isinstance(tau1, int), "'tau2' must be float or int"
-        assert tau2 >= 0., "'tau2' must be greater than zero!"
+        assert tau2 > 0., "'tau2' must be greater than zero!"
 
         assert isinstance(v, float) or isinstance(v, int), "'v' must be float or int"
         assert isinstance(S, list) and all(isinstance(x, float) for x in S) or \
                isinstance(S, list) and all(isinstance(x, int)   for x in S), \
                "'S' must be list of floats or ints"
+        assert (len(S) == 3), "'S' len must be equal to 3"
         assert (isinstance(G, list) and all(isinstance(sublist, list) and all(isinstance(x, float) for x in sublist) for sublist in G)) or \
                (isinstance(G, list) and all(isinstance(sublist, list) and all(isinstance(x, int)   for x in sublist) for sublist in G)), \
                "'G' must be list of lists of floats or ints"
 
-        self.a = a
-        self.b = b
+        self.a    = a
+        self.b    = b
         self.tau1 = tau1
         self.tau2 = tau2
-        # потенциал реверсии
-        self.v = v
-        # матрица 3Х3 коэффициентов синапт. связи между нейронами
-        self.G = G
-        # G[0][0], G[1][1], G[2][2] = 0, 0, 0
-        # у каждого i - го нейрона свой внешний стимул (Si)
-        # S = [S1, S2, S3]
-        self.S = S
+        self.v    = v
+        self.G    = G
+        self.S    = S
+
+
+    def getParameters(self):
+        params = self.flatten_params((self.a, self.b, self.tau1, self.tau2, self.v, self.S, self.G))
+        return params
+
+
+    def event_extr(self, t, X):
+        rhs = self.getSystem(t, X)
+        return rhs[1::3]
 
 
     def getSystem(self, t, X):
@@ -70,7 +76,7 @@ class ThreeConnectedNeurons:
         for i in range(0, 3):
             gij = 0
             for j in range(0, 3):
-                gij += np.heaviside(xs[j], 0) * G[i][j]
+                gij += np.heaviside(xs[j], 0) * G[j][i]
             dz[i] = (gij - zs[i]) / tau2
 
         for i, rhs in enumerate(fhsRhs):
@@ -82,73 +88,21 @@ class ThreeConnectedNeurons:
         return dX
 
 
-    def addGrid(self, grid):
-        self.grid = dict()
-        for parameter_name, parameter_values in grid.items():
-            if not hasattr(self, parameter_name):
-                raise RuntimeError(f"Class {self.__class__.__name__} doesn't have parameter {parameter_name}")
-
-            start_param         = getattr(self, parameter_name)
-            left_side_interval  = parameter_values['interval'][0]
-            right_side_interval = parameter_values['interval'][0]
-
-            self.grid[parameter_name] = np.arange(start_param - left_side_interval, start_param + right_side_interval + 1, parameter_values['step'])
-
-
-    # Helper function to get parameters. Maybe should be in some util.py file
-    def flatten_params(self, params):
-        flat_list = []
-        for param in params:
-            if isinstance(param, (list, tuple)):
-                flat_list.extend(self.flatten_params(param))
-            else:
-                flat_list.append(param)
-        return flat_list
-
-
-    def getParameters(self):
-        params = self.flatten_params((self.a, self.b, self.tau1, self.tau2, self.v, self.S, self.G))
-        return params
-
-
-    def getParametersPlaces(self):
-        n = 0
-        self.param_places = []
-        for param_name in self.param_names:
-            param_value = getattr(self, param_name)
-            if isinstance(param_value, (list, tuple)):
-                param_len = len(param_value)
-            else:
-                param_len = 1
-            self.param_places.append([n, param_len])
-            n = n + param_len
-        return self.param_places
-
-
-    def getParametersToChange(self):
-        params_to_change = []
-        for param_name, _ in self.grid.items():
-            param_index = self.param_names.index(param_name)
-            params_to_change.append(param_index)
-        return params_to_change
-
-
-    def event_extr(self, t, X):
-        rhs = self.getSystem(t, X)
-        return rhs[1::3]
-
-
 @cuda.jit
 def rhs_jit(X, params, dX):
-    # X expected to be length 9: [x1, y1, z1, x2, y2, z2, x3, y3, z3]
-    # dX same length 9 output
-    a = params[0]
-    b = params[1]
+    a    = params[0]
+    b    = params[1]
     tau1 = params[2]
     tau2 = params[3]
-    v = params[4]
-    S = params[5:7]
-    G = params[8:16]
+    v    = params[4]
+
+    S = cuda.local.array(3, dtype=np.float64)
+    for i in range(3):
+        S[i] = params[5 + i]
+
+    G = cuda.local.array(9, dtype=np.float64)
+    for i in range(9):
+        G[i] = params[8 + i]
 
     xs = cuda.local.array(3, dtype=np.float64)
     ys = cuda.local.array(3, dtype=np.float64)
@@ -165,21 +119,25 @@ def rhs_jit(X, params, dX):
 
     for i in range(3):
         local_dX = cuda.local.array(2, dtype=np.float64)
-        xy = cuda.local.array(2, dtype=np.float64)
+        xy       = cuda.local.array(2, dtype=np.float64)
+
         xy[0] = xs[i]
         xy[1] = ys[i]
+
         rhs_jit_fhn(xy, a, b, S[i], local_dX)
+
         dx[i] = (local_dX[0] - zs[i] * (xs[i] - v)) / tau1
         dy[i] = local_dX[1]
 
     for i in range(3):
-        gij = 0.
+        gji = 0.
         for j in range(3):
             heav = 1. if xs[j] >= 0. else 0.
-            gij += heav * G[i * 3 + j]
-        dz[i] = (gij - zs[i]) / tau2
+            gji += heav * G[i + j * 3]
+        dz[i] = (gji - zs[i]) / tau2
 
     for i in range(3):
         dX[3 * i] = dx[i]
         dX[3 * i + 1] = dy[i]
         dX[3 * i + 2] = dz[i]
+

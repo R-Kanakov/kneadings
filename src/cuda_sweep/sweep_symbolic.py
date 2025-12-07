@@ -1,7 +1,6 @@
 from math import prod
 import numpy as np
 from numba import cuda
-from src.mapping.convert import decimal_to_number_system
 import importlib
 
 # This is the only way i found to create `cuda.local.array` with "dynamic" size
@@ -12,7 +11,6 @@ module     = None
 @cuda.jit
 def stepper_rk4(params, y_curr, dt, k1):
     """Makes RK-4 step and saves the value in y_curr"""
-    #k1     = cuda.local.array(system_dim, dtype=np.float64)
     k2     = cuda.local.array(system_dim, dtype=np.float64)
     k3     = cuda.local.array(system_dim, dtype=np.float64)
     k4     = cuda.local.array(system_dim, dtype=np.float64)
@@ -36,11 +34,12 @@ def stepper_rk4(params, y_curr, dt, k1):
         y_curr[i] = y_curr[i] + (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]) * dt / 6.0
 
 
-events_len = None
+events_len    = None
+events_in_int = None
 
 @cuda.jit
 def integrator_rk4(y_curr, params, dt, n, tSkip, events, events_flags):
-    """Computes the trajectory"""
+    """Computes events happend for trajectory"""
     y_tmp = cuda.local.array(system_dim, dtype=np.float64)
     if tSkip is not None:
         for i in range(system_dim):
@@ -53,7 +52,7 @@ def integrator_rk4(y_curr, params, dt, n, tSkip, events, events_flags):
         for i in range(system_dim):
             y_curr[i] = y_tmp[i]
 
-    dX_prev     = cuda.local.array(system_dim, dtype=np.float64)
+    dX_prev = cuda.local.array(system_dim, dtype=np.float64)
     for i in range(system_dim):
         dX_prev[i] = -float('inf')
 
@@ -65,15 +64,19 @@ def integrator_rk4(y_curr, params, dt, n, tSkip, events, events_flags):
             component = events[j]
 
             if dX_prev[component] > 0.0 and dX_curr[component] <= 0.0:
-                events_flags[i * events_len + j] = 1
+                curr = i * events_len + j
+                ind  = curr // events_in_int
+                mod  = curr % events_in_int
+                events_flags[ind] |= 1 << mod
 
         for j in range(system_dim):
             dX_prev[j] = dX_curr[j]
 
 
-len_change_params = None
-len_system_params = None
-total_events_len  = None
+dots_with_events_per_curve = None
+len_change_params          = None
+len_system_params          = None
+total_events_len           = None
 
 @cuda.jit
 def sweep_threads(
@@ -92,8 +95,9 @@ def sweep_threads(
 ):
     """CUDA kernel"""
     idx = cuda.blockIdx.x * cuda.blockDim.x + cuda.threadIdx.x
+    cuda.syncthreads()
 
-    if idx < total_parameter_space_size:
+    if idx < total_events_len:
         multi_idx = cuda.local.array(len_change_params, dtype=np.int64)
         idx_tmp = idx
         for i in range(len(grid_lengths)):
@@ -108,13 +112,15 @@ def sweep_threads(
             # TODO: make this work not for only parameters with len == 1
             system_parameters_tmp[parameters_places[parameters_to_change[i]][0]] = grid_params[i, multi_idx[i]]
 
-        events_flags = cuda.local.array(total_events_len, dtype=np.uint8)
-        for i in range(total_events_len):
+        events_flags = cuda.local.array(dots_with_events_per_curve, dtype=np.uint64)
+        for i in range(dots_with_events_per_curve):
             events_flags[i] = 0
 
         integrator_rk4(init, system_parameters_tmp, dt, n, tSkip, events, events_flags)
-        for i in range(total_events_len):
-            symbolic_hash_set_gpu[idx * events_len + i] = events_flags[i]
+
+        current_array_idx = idx * dots_with_events_per_curve
+        for i in range(dots_with_events_per_curve):
+            symbolic_hash_set_gpu[current_array_idx + i] = events_flags[i]
 
 
 THREADS_PER_BLOCK = 20
@@ -132,12 +138,14 @@ def sweep(
     """Calls CUDA kernel and gets kneadings set back from GPU"""
     grid_lengths = [len(param_grid) for _, param_grid in system.grid.items()]
     total_parameter_space_size = prod(grid_lengths)
-    
-    global module, events_len, total_events_len
-    module            = importlib.import_module(system.module_name)
-    events_len        = len(events)
-    total_events_len  = events_len * total_parameter_space_size
-    
+
+    global module, events_len, events_in_int, dots_with_events_per_curve, total_events_len
+    module                     = importlib.import_module(system.module_name)
+    events_len                 = len(events)
+    events_in_int              = 64 // events_len
+    dots_with_events_per_curve = (n // events_in_int + (0 if n % events_in_int == 0 else 1))
+
+    total_events_len      = dots_with_events_per_curve * total_parameter_space_size
     symbolic_hash_set_gpu = cuda.device_array(total_events_len)
 
     initPt_gpu               = cuda.to_device(initPt)
@@ -150,7 +158,7 @@ def sweep(
     global system_dim, len_change_params, len_system_params
     system_dim        = len(initPt_gpu)
     len_change_params = len(parameters_to_change_gpu)
-    len_system_params = len(system_parameters_gpu)    
+    len_system_params = len(system_parameters_gpu)
 
     max_len       = max(len(v) for v in system.grid.values())
     padded_arrays = [np.pad(np.array(v, dtype=np.float64), (0, max_len - len(v)), mode='constant') for v in system.grid.values()]
@@ -160,15 +168,21 @@ def sweep(
     dim_grid  = (total_parameter_space_size + THREADS_PER_BLOCK - 1) // THREADS_PER_BLOCK
     dim_block = THREADS_PER_BLOCK
 
-    print(f"Num of blocks per grid:                {dim_grid}")
-    print(f"Num of threads per block:              {dim_block}")
-    print(f"Total Num of threads running:          {dim_grid * dim_block}")
-    for param_name, param_grid in system.grid.items():
-       print(f"Count of '{param_name}' parameters:               {len(param_grid)}")
-    print(f"Number of all parameters combinations: {total_parameter_space_size}")
+    str1 = "Num of blocks per grid:"
+    str2 = "Num of threads per block:"
+    str3 = "Total Num of threads running:"
+    str4 = [f"Count of '{param_name}' parameters:" for param_name, _ in system.grid.items()]
+    str5 = "Number of all parameters combinations:"
 
-    #print_sys_param = np.zeros((total_parameter_space_size, len(system_parameters_gpu)), dtype=np.float64)
-    #print_sys_param_gpu = cuda.to_device(print_sys_param)
+    all_strings = [str1, str2, str3, *str4, str5]
+    max_str_len = max(len(s) for s in all_strings)
+
+    print(f"{str1:<{max_str_len}} {dim_grid}")
+    print(f"{str2:<{max_str_len}} {dim_block}")
+    print(f"{str3:<{max_str_len}} {dim_grid * dim_block}")
+    for (_, param_grid), str4_elem in zip(system.grid.items(), str4):
+       print(f"{str4_elem:<{max_str_len}} {len(param_grid)}")
+    print(f"{str5:<{max_str_len}} {total_parameter_space_size}")
 
     # Call CUDA kernel
     sweep_threads[dim_grid, dim_block](
@@ -186,11 +200,7 @@ def sweep(
         events_gpu
     )
 
-    #print_sys_param_gpu.copy_to_host(print_sys_param)
-    #
-
     symbolic_representation_set = np.zeros(total_events_len)
     symbolic_hash_set_gpu.copy_to_host(symbolic_representation_set)
-    np.savetxt('params_output.txt', symbolic_representation_set, fmt='%.6f', delimiter=',')
 
-    return symbolic_representation_set
+    return symbolic_representation_set, total_parameter_space_size, grid_lengths, dots_with_events_per_curve, events_in_int, events_len

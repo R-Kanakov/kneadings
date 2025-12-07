@@ -1,7 +1,12 @@
+from .BaseSystem import BaseSystem
 from numba import cuda
 
-class FitzHughNagumo:
+
+class FitzHughNagumo(BaseSystem):
     """"FitzHugh-Nagumo system"""
+    module_name = 'src.systems.FitzHughNagumo'
+
+
     def __init__(self, a, b, S):
         assert a > 0., "'a' must be greater than zero!"
         self.a = a
@@ -9,6 +14,11 @@ class FitzHughNagumo:
         self.b = b
         # S - внешнее воздействие:
         self.S = S
+
+
+    def getParameters(self):
+        params = self.flatten_params((self.a, self.b))
+        return params
 
 
     def getSystem(self, t, X):
@@ -25,6 +35,7 @@ class FitzHughNagumo:
                 setattr(self, key, paramDict[key])
             else:
                 raise KeyError(f"System has no parameter '{key}'")
+
 
 @cuda.jit
 def rhs_jit(X, a, b, S, dX):

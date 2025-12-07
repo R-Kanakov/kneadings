@@ -1,17 +1,12 @@
 # name of the task and system to perform
 task: symbolic_representation
-system: three_connected_neurons
+system: multi_peak
 
 # A config for three connected neurons
 # Parameters can be passed in any order
 system_params:
-  b: 0.7
-  a: 0.5
-  tau1: 1
-  tau2: 1
-  v: 0
-  S: [1, 1, 1]
-  G: [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+  amplitude: 1.0
+  frequency: 3.0
 
 # Grid describes parameters for bi-parametric scan. TODO: add larger scan.
 # First goes parameter name, than interval in which parameter will be seen
@@ -20,39 +15,29 @@ system_params:
 # and we'll have (50.5 - (-49.5)) / 0.01 = 10000 start dots
 # TODO: If parameter is a list, each element of it will be changed
 grid:
-  a:
-    interval: [5, 4] # [5, 5]
-    step: 0.01
-  b:
-    interval: [5, 6] # [10, 10]
-    step: 0.01
+  amplitude:
+    interval: [10, 10]
+    step: 0.1
+  frequency:
+    interval: [10, 10]
+    step: 0.1
 
 evaluation_params:
   # Required params:
   dt: 0.001
   n: 5000
-  initPt: [-0.5, 0, -1, 1, 0, -1, 0, 0, -1]
+  initPt: [-0.5, 1.0]
   # Optional params:
   rtol: 1e-8
   atol: 1e-8
-  tSkip: 2000.0
+  tSkip: 5.0
 
 events:
   evt1:
-    component: y1
+    component: x1
     compare: <
     value: 0.5
     color: red
-  evt2:
-    component: y2
-    compare: <
-    value: 0.5
-    color: orange
-  evt3:
-    component: y3
-    compare: <
-    value: 0.5
-    color: blue
 
 # information for saving files
 # "directory": where save it

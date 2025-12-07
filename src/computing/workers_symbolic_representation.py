@@ -1,9 +1,11 @@
 import operator
+import numpy as np
 
-from src.systems import FitzHughNagumo, ThreeConnectedNeurons
+from src.systems import FitzHughNagumo, ThreeConnectedNeurons, MultiPeak
 
 from src.computing.util import register
 from src.cuda_sweep.sweep_symbolic import sweep
+from src.mapping.plot_symbolic import plot_symbolic_representation
 
 registry = {
     "worker": {},
@@ -20,7 +22,8 @@ class ConfigDataSymbolicRepresenatition:
     def __init__(self):
         self.available_systems = {
             "fitz_hugh_nagumo"       : FitzHughNagumo,
-            "three_connected_neurons": ThreeConnectedNeurons
+            "three_connected_neurons": ThreeConnectedNeurons,
+            "multi_peak"             : MultiPeak
         }
 
         self.comparison_operators = {
@@ -87,8 +90,16 @@ class ConfigDataSymbolicRepresenatition:
             color = event_dict['color']
 
             self.events.append([self.components_conversion[component], compare, value, color])
+
         if len(self.events) == 0:
            self.events = None
+
+        # Output
+        output = config['output']
+        self.directory      = output['directory']
+        self.mask           = output['mask']
+        self.useTimestamp   = output['useTimestamp']
+        self.imageExtension = output['imageExtension']
 
 
 data = ConfigDataSymbolicRepresenatition()
@@ -97,12 +108,12 @@ data = ConfigDataSymbolicRepresenatition()
 @register(registry, 'init')
 def init_symbolic_representation(config, timeStamp):
     data.initialize(config)
-    return{}
+    return {}
 
 
 @register(registry, 'worker')
 def worker_symbolic_representation(config, initResult, timeStamp):
-    sweep(
+    workerResult = sweep(
         data.system,
         data.dt,
         data.n,
@@ -112,9 +123,10 @@ def worker_symbolic_representation(config, initResult, timeStamp):
         data.atol,
         data.events
     )
-    return{}
+    return workerResult
 
 
 @register(registry, 'post')
 def post_symbolic_representation(config, initResult, workerResult, grid, startTime):
-    return{}
+    plot_symbolic_representation(workerResult, data.directory, data.imageExtension, data.system.grid)
+    return {}

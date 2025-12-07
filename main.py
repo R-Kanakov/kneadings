@@ -24,13 +24,13 @@ if __name__ == "__main__":
     configDict = getConfiguration(sys.argv[1])
     taskName   = configDict['task']
 
+    wrk    = WORKER_REGISTRY[taskName]
+    engine = ENGINE_REGISTRY[taskName]
+
     # Creating functions for initialization, computing and drawing
-    wrk = WORKER_REGISTRY[taskName]
     initFunc    = wrk.registry['init']
     worker      = wrk.registry['worker']
     postProcess = wrk.registry['post']
-
-    engine = ENGINE_REGISTRY[taskName]
 
     def gridMaker(configDict): pass
     workflow(configDict, initFunc, gridMaker, worker, engine, postProcess)
